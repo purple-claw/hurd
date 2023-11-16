@@ -99,53 +99,42 @@ load_section (void *section, struct execdata *u, int interp)
     /* This section is empty; ignore it.  */
     return 0;
 
-  if (filesz != 0)
-    {
-      vm_address_t mapstart = round_page (addr);
+  if (filesz != 0) {
+    vm_address_t mapstart = round_page(addr);
 
-      /* Allocate space in the task and write CONTENTS into it.  */
-      void write_to_task (vm_address_t * mapstart, vm_size_t size,
-			  vm_prot_t vm_prot, vm_address_t contents)
-	{
-	  vm_size_t off = size % vm_page_size;
-	  /* Allocate with vm_map to set max protections.  */
-	  u->error = vm_map (u->task,
-			     mapstart, size, mask, anywhere,
-			     MACH_PORT_NULL, 0, 1,
-			     vm_prot|VM_PROT_WRITE,
-			     VM_PROT_READ|VM_PROT_WRITE|VM_PROT_EXECUTE,
-			     VM_INHERIT_COPY);
-	  /* vm_write only works on integral multiples of vm_page_size */
-	  if (! u->error && size >= vm_page_size)
-	    u->error = vm_write (u->task, *mapstart, contents, size - off);
-	  if (! u->error && off != 0)
-	    {
-	      vm_address_t page = 0;
-	      page = (vm_address_t) mmap (0, vm_page_size,
-					  PROT_READ|PROT_WRITE, MAP_ANON,
-					  0, 0);
-	      u->error = (page == -1) ? errno : 0;
-	      if (! u->error)
-		{
-		  u->error = hurd_safe_copyin ((void *) page, /* XXX/fault */
-			  (void *) (contents + (size - off)),
-			  off);
-		  if (! u->error)
-		    u->error = vm_write (u->task, *mapstart + (size - off),
-				         page, vm_page_size);
-		  munmap ((caddr_t) page, vm_page_size);
-		}
-	    }
-	  /* Reset the current protections to the desired state.  */
-	  if (! u->error && (vm_prot & VM_PROT_WRITE) == 0)
-	    u->error = vm_protect (u->task, *mapstart, size, 0, vm_prot);
-	}
+    u->error = vm_map(u->task,
+                      &mapstart, filesz, mask, anywhere,
+                      MACH_PORT_NULL, 0, 1,
+                      vm_prot | VM_PROT_WRITE,
+                      VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE,
+                      VM_INHERIT_COPY);
 
-      if (mapstart - addr < filesz)
-	{
-	  /* MAPSTART is the first page that starts inside the section.
-	     Map all the pages that start inside the section.  */
+    if (!u->error) {
+        if (filesz >= vm_page_size) {
+            // vm_write only works on integral multiples of vm_page_size
+            u->error = vm_write(u->task, mapstart, contents, filesz);
+        }
 
+        if (!u->error && filesz % vm_page_size != 0) {
+            // Allocate space for the remaining bytes
+            vm_address_t page = (vm_address_t)mmap(0, vm_page_size, PROT_READ | PROT_WRITE, MAP_ANON, 0, 0);
+            u->error = (page == (vm_address_t)-1) ? errno : 0;
+
+            if (!u->error) {
+                // Copy the remaining bytes
+                u->error = hurd_safe_copyin((void *)page, (void *)(contents + (filesz - filesz % vm_page_size)), filesz % vm_page_size);
+
+                if (!u->error) {
+                    // Write the remaining bytes to the task
+                    u->error = vm_write(u->task, mapstart + (filesz - filesz % vm_page_size), page, filesz % vm_page_size);
+                }
+
+                munmap((caddr_t)page, vm_page_size);
+            }
+        }
+    }
+}
+	  
 #define SECTION_IN_MEMORY_P	(u->file_data != NULL)
 #define SECTION_CONTENTS	(u->file_data + filepos)
 	  if (SECTION_IN_MEMORY_P)
